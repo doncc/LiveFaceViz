@@ -5,6 +5,8 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 from pylivelinkface import PyLiveLinkFace, FaceBlendShape
 
+from csv_recorder import CsvRecorder
+
 # --- 完整的中文映射表 ---
 CHINESE_MAPPING = {
     "EyeBlinkLeft": "左眼闭合", "EyeBlinkRight": "右眼闭合",
@@ -50,6 +52,9 @@ class LiveLinkVisualizer(QtWidgets.QMainWindow):
         
         # 移除默认的边距
         self.layout.setContentsMargins(0, 0, 0, 0)
+
+        # 采集工具条：开始 / 停止写入 30fps 标准 CSV
+        self._setup_recording_toolbar()
 
         # 2. 实例化绘图对象
         self.plot_widget = pg.PlotWidget()
@@ -111,6 +116,57 @@ class LiveLinkVisualizer(QtWidgets.QMainWindow):
         self.timer.timeout.connect(self.update_data)
         self.timer.start(16)
 
+    def _setup_recording_toolbar(self) -> None:
+        """初始化 CSV 录制器与开始/停止采集工具条。"""
+        self.recorder = CsvRecorder(parent=self)
+        self.recorder.write_error.connect(self._on_record_error)
+        self.recorder.recording_changed.connect(self._on_recording_changed)
+
+        toolbar = QtWidgets.QToolBar("采集")
+        toolbar.setMovable(False)
+        self.addToolBar(QtCore.Qt.TopToolBarArea, toolbar)
+
+        self.btn_start = QtWidgets.QAction("开始采集", self)
+        self.btn_stop = QtWidgets.QAction("停止采集", self)
+        self.btn_start.triggered.connect(self._start_recording)
+        self.btn_stop.triggered.connect(self._stop_recording)
+        self.btn_stop.setEnabled(False)
+
+        toolbar.addAction(self.btn_start)
+        toolbar.addAction(self.btn_stop)
+
+        self.status_label = QtWidgets.QLabel("未采集")
+        toolbar.addWidget(self.status_label)
+
+    def _start_recording(self) -> None:
+        """开始写入 30fps 标准 CSV。"""
+        self.recorder.start()
+
+    def _stop_recording(self) -> None:
+        """停止采集并关闭文件。"""
+        self.recorder.stop()
+
+    def _on_recording_changed(self, recording: bool, path: str) -> None:
+        """根据录制状态更新按钮与状态栏文案。"""
+        self.btn_start.setEnabled(not recording)
+        self.btn_stop.setEnabled(recording)
+        if recording:
+            self.status_label.setText(f"采集中 → {path}")
+        elif path:
+            self.status_label.setText(f"已保存 → {path}")
+        else:
+            self.status_label.setText("未采集")
+
+    def _on_record_error(self, message: str) -> None:
+        """磁盘写失败时提示用户。"""
+        QtWidgets.QMessageBox.critical(self, "采集失败", message)
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """窗口关闭时若仍在录制则先安全停止。"""
+        if self.recorder.is_recording:
+            self.recorder.stop()
+        super().closeEvent(event)
+
     def update_data(self):
         try:
             last_frame = None
@@ -121,6 +177,8 @@ class LiveLinkVisualizer(QtWidgets.QMainWindow):
                     last_frame = live_link_face
         except BlockingIOError:
             if last_frame:
+                # 旁路喂给录制器（观察者），不影响柱状图逻辑
+                self.recorder.on_frame(last_frame)
                 new_widths = [last_frame.get_blendshape(shape) for shape in self.shapes]
                 self.bar_graph.setOpts(width=np.array(new_widths))
 

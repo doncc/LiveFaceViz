@@ -73,9 +73,7 @@ python main.py
 
 ## 📸 界面预览
 
-![](./screenshot/ScreenShot_1.png)
-
-![](./screenshot/ScreenShot_2.png)
+![](./screenshot/ScreenShot.png)
 
 ## ⚖️ 开源协议
 
